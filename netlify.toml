@@ -3,7 +3,7 @@
   command = "npm run build"
 
 [context.production]
-  environment = { NODE_ENV = "production" }
+  environment = { NODE_ENV = "production", NPM_FLAGS = "--include=dev" }
 
 [functions]
   directory = "netlify/functions"
