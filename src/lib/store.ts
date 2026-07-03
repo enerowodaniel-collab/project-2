@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase } from './supabase';
 import type {
   Transaction,
   SavingsGoal,
@@ -97,46 +96,17 @@ export const useStore = create<AppState>()(
       totalExpenses: 0,
       totalSavings: 0,
 
-      // Initialize
+      // Initialize — local-only implementation (no Supabase)
       initialize: async () => {
         try {
           set({ isLoading: true });
 
-          const [
-            { data: preferences },
-            { data: transactions },
-            { data: savingsGoals },
-            { data: budgets },
-            { data: foodChallenges },
-            { data: subscriptions },
-            { data: achievements },
-            { data: gamificationStats },
-          ] = await Promise.all([
-            supabase.from('user_preferences').select('*').maybeSingle(),
-            supabase.from('transactions').select('*').order('date', { ascending: false }),
-            supabase.from('savings_goals').select('*').order('created_at', { ascending: false }),
-            supabase.from('budgets').select('*').eq('is_active', true).order('created_at', { ascending: false }),
-            supabase.from('food_challenges').select('*').order('week_start_date', { ascending: false }),
-            supabase.from('subscriptions').select('*').eq('is_active', true).order('next_billing_date'),
-            supabase.from('achievements').select('*').order('earned_at', { ascending: false }),
-            supabase.from('gamification_stats').select('*').maybeSingle(),
-          ]);
-
-          set({
-            preferences: preferences || null,
-            transactions: transactions || [],
-            savingsGoals: savingsGoals || [],
-            budgets: budgets || [],
-            foodChallenges: foodChallenges || [],
-            subscriptions: subscriptions || [],
-            achievements: achievements || [],
-            gamificationStats: gamificationStats || null,
-            isInitialized: true,
-            isLoading: false,
-          });
-
+          // Persist middleware restores saved preferences automatically.
+          // For a simple local-first app, just mark initialized and stop loading.
+          set({ isInitialized: true, isLoading: false });
           get().recalculateTotals();
         } catch (error) {
+          // eslint-disable-next-line no-console
           console.error('Failed to initialize:', error);
           set({ isLoading: false, isInitialized: true });
         }
@@ -148,194 +118,105 @@ export const useStore = create<AppState>()(
       updatePreferences: async (updates) => {
         const { preferences } = get();
         if (!preferences) return;
-
-        const { data, error } = await supabase
-          .from('user_preferences')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', preferences.id)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set({ preferences: data });
-        }
+        const updated = { ...preferences, ...updates, updated_at: new Date().toISOString() } as any;
+        set({ preferences: updated });
       },
 
       // Transactions
       addTransaction: async (transactionData) => {
-        const { data, error } = await supabase
-          .from('transactions')
-          .insert(transactionData)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set((state) => ({
-            transactions: [data, ...state.transactions],
-          }));
-          get().recalculateTotals();
-          get().addXP(10);
-
-          if (get().transactions.length === 1) {
-            get().checkAndAwardAchievement('first_transaction');
-          }
-          return data;
-        }
-        throw new Error('Failed to add transaction');
+        const id = (crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2, 9);
+        const now = new Date().toISOString();
+        const data = { id, ...transactionData, created_at: now, updated_at: now } as any;
+        set((state) => ({ transactions: [data, ...state.transactions] }));
+        get().recalculateTotals();
+        get().addXP(10);
+        if (get().transactions.length === 1) get().checkAndAwardAchievement('first_transaction');
+        return data;
       },
 
       updateTransaction: async (id, updates) => {
-        const { error } = await supabase
-          .from('transactions')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id);
-
-        if (!error) {
-          set((state) => ({
-            transactions: state.transactions.map((t) =>
-              t.id === id ? { ...t, ...updates } : t
-            ),
-          }));
-          get().recalculateTotals();
-        }
+        const updated_at = new Date().toISOString();
+        set((state) => ({
+          transactions: state.transactions.map((t) => (t.id === id ? { ...t, ...updates, updated_at } : t)),
+        }));
+        get().recalculateTotals();
       },
 
       deleteTransaction: async (id) => {
-        const { error } = await supabase.from('transactions').delete().eq('id', id);
-        if (!error) {
-          set((state) => ({
-            transactions: state.transactions.filter((t) => t.id !== id),
-          }));
-          get().recalculateTotals();
-        }
+        set((state) => ({ transactions: state.transactions.filter((t) => t.id !== id) }));
+        get().recalculateTotals();
       },
 
       // Savings Goals
       addSavingsGoal: async (goalData) => {
-        const { data, error } = await supabase
-          .from('savings_goals')
-          .insert(goalData)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set((state) => ({
-            savingsGoals: [data, ...state.savingsGoals],
-          }));
-          get().addXP(25);
-
-          if (get().savingsGoals.length === 1) {
-            get().checkAndAwardAchievement('first_goal');
-          }
-          return data;
-        }
-        throw new Error('Failed to add savings goal');
+        const id = (crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2, 9);
+        const now = new Date().toISOString();
+        const data = { id, ...goalData, created_at: now, updated_at: now } as any;
+        set((state) => ({ savingsGoals: [data, ...state.savingsGoals] }));
+        get().addXP(25);
+        if (get().savingsGoals.length === 1) get().checkAndAwardAchievement('first_goal');
+        return data;
       },
 
       updateSavingsGoal: async (id, updates) => {
-        const { error } = await supabase
-          .from('savings_goals')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id);
-
-        if (!error) {
-          set((state) => ({
-            savingsGoals: state.savingsGoals.map((g) =>
-              g.id === id ? { ...g, ...updates } : g
-            ),
-          }));
-          get().recalculateTotals();
-        }
+        const updated_at = new Date().toISOString();
+        set((state) => ({
+          savingsGoals: state.savingsGoals.map((g) => (g.id === id ? { ...g, ...updates, updated_at } : g)),
+        }));
+        get().recalculateTotals();
       },
 
       deleteSavingsGoal: async (id) => {
-        const { error } = await supabase.from('savings_goals').delete().eq('id', id);
-        if (!error) {
-          set((state) => ({
-            savingsGoals: state.savingsGoals.filter((g) => g.id !== id),
-          }));
-          get().recalculateTotals();
-        }
+        set((state) => ({ savingsGoals: state.savingsGoals.filter((g) => g.id !== id) }));
+        get().recalculateTotals();
       },
 
       addToSavingsGoal: async (id, amount) => {
         const goal = get().savingsGoals.find((g) => g.id === id);
         if (!goal) return;
-
-        const newAmount = Math.min(goal.current_amount + amount, goal.target_amount);
+        const newAmount = Math.min((goal.current_amount || 0) + amount, goal.target_amount);
         const isCompleted = newAmount >= goal.target_amount;
-
         await get().updateSavingsGoal(id, {
           current_amount: newAmount,
           is_completed: isCompleted,
           milestone_percentage: Math.floor((newAmount / goal.target_amount) * 100),
         });
-
         get().addXP(Math.floor(amount / 10));
-
-        if (isCompleted) {
-          get().checkAndAwardAchievement('goal_reached');
-        }
+        if (isCompleted) get().checkAndAwardAchievement('goal_reached');
       },
 
       // Budgets
       addBudget: async (budgetData) => {
-        const { data, error } = await supabase
-          .from('budgets')
-          .insert(budgetData)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set((state) => ({
-            budgets: [data, ...state.budgets],
-          }));
-          get().addXP(25);
-
-          if (get().budgets.length === 1) {
-            get().checkAndAwardAchievement('first_budget');
-          }
-          return data;
-        }
-        throw new Error('Failed to add budget');
+        const id = (crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2, 9);
+        const now = new Date().toISOString();
+        const data = { id, ...budgetData, created_at: now, updated_at: now } as any;
+        set((state) => ({ budgets: [data, ...state.budgets] }));
+        get().addXP(25);
+        if (get().budgets.length === 1) get().checkAndAwardAchievement('first_budget');
+        return data;
       },
 
       updateBudget: async (id, updates) => {
-        const { error } = await supabase
-          .from('budgets')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id);
-
-        if (!error) {
-          set((state) => ({
-            budgets: state.budgets.map((b) =>
-              b.id === id ? { ...b, ...updates } : b
-            ),
-          }));
-        }
+        const updated_at = new Date().toISOString();
+        set((state) => ({ budgets: state.budgets.map((b) => (b.id === id ? { ...b, ...updates, updated_at } : b)) }));
       },
 
       deleteBudget: async (id) => {
-        const { error } = await supabase.from('budgets').delete().eq('id', id);
-        if (!error) {
-          set((state) => ({
-            budgets: state.budgets.filter((b) => b.id !== id),
-          }));
-        }
+        set((state) => ({ budgets: state.budgets.filter((b) => b.id !== id) }));
       },
 
       // Food Challenges
       createFoodChallenge: async (diceValue) => {
         const { FOOD_BUDGET_VALUES } = await import('../types');
         const budgetAmount = FOOD_BUDGET_VALUES[diceValue as keyof typeof FOOD_BUDGET_VALUES].amount;
-
         const today = new Date();
         const weekStart = new Date(today);
         weekStart.setDate(today.getDate() - today.getDay());
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekStart.getDate() + 6);
-
-        const challengeData = {
+        const id = (crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2, 9);
+        const data = {
+          id,
           week_start_date: weekStart.toISOString().split('T')[0],
           week_end_date: weekEnd.toISOString().split('T')[0],
           budget_amount: budgetAmount,
@@ -343,148 +224,59 @@ export const useStore = create<AppState>()(
           dice_value: diceValue,
           is_completed: false,
           is_successful: false,
-        };
-
-        const { data, error } = await supabase
-          .from('food_challenges')
-          .insert(challengeData)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set((state) => ({
-            foodChallenges: [data, ...state.foodChallenges],
-          }));
-          return data;
-        }
-        throw new Error('Failed to create food challenge');
+        } as any;
+        set((state) => ({ foodChallenges: [data, ...state.foodChallenges] }));
+        return data;
       },
 
       updateFoodChallenge: async (id, updates) => {
-        const { error } = await supabase
-          .from('food_challenges')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id);
-
-        if (!error) {
-          set((state) => ({
-            foodChallenges: state.foodChallenges.map((c) =>
-              c.id === id ? { ...c, ...updates } : c
-            ),
-          }));
-        }
+        const updated_at = new Date().toISOString();
+        set((state) => ({ foodChallenges: state.foodChallenges.map((c) => (c.id === id ? { ...c, ...updates, updated_at } : c)) }));
       },
 
       getActiveFoodChallenge: () => {
         const today = new Date().toISOString().split('T')[0];
-        return get().foodChallenges.find(
-          (c) => c.week_start_date <= today && c.week_end_date >= today && !c.is_completed
-        ) || null;
+        return get().foodChallenges.find((c) => c.week_start_date <= today && c.week_end_date >= today && !c.is_completed) || null;
       },
 
       // Subscriptions
       addSubscription: async (subData) => {
-        const { data, error } = await supabase
-          .from('subscriptions')
-          .insert(subData)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set((state) => ({
-            subscriptions: [data, ...state.subscriptions],
-          }));
-          return data;
-        }
-        throw new Error('Failed to add subscription');
+        const id = (crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2, 9);
+        const now = new Date().toISOString();
+        const data = { id, ...subData, created_at: now, updated_at: now } as any;
+        set((state) => ({ subscriptions: [data, ...state.subscriptions] }));
+        return data;
       },
 
       updateSubscription: async (id, updates) => {
-        const { error } = await supabase
-          .from('subscriptions')
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq('id', id);
-
-        if (!error) {
-          set((state) => ({
-            subscriptions: state.subscriptions.map((s) =>
-              s.id === id ? { ...s, ...updates } : s
-            ),
-          }));
-        }
+        const updated_at = new Date().toISOString();
+        set((state) => ({ subscriptions: state.subscriptions.map((s) => (s.id === id ? { ...s, ...updates, updated_at } : s)) }));
       },
 
       deleteSubscription: async (id) => {
-        const { error } = await supabase.from('subscriptions').delete().eq('id', id);
-        if (!error) {
-          set((state) => ({
-            subscriptions: state.subscriptions.filter((s) => s.id !== id),
-          }));
-        }
+        set((state) => ({ subscriptions: state.subscriptions.filter((s) => s.id !== id) }));
       },
 
       // Achievements
       checkAndAwardAchievement: async (achievementId) => {
         const { achievements } = get();
-        if (achievements.some((a) => a.achievement_id === achievementId)) {
-          return null;
-        }
-
+        if (achievements.some((a) => a.achievement_id === achievementId)) return null;
         const { ACHIEVEMENT_DEFINITIONS } = await import('../types');
         const definition = ACHIEVEMENT_DEFINITIONS.find((a) => a.id === achievementId);
         if (!definition) return null;
-
-        const achievementData = {
-          achievement_id: definition.id,
-          name: definition.name,
-          description: definition.description,
-          icon: definition.icon,
-          xp_reward: definition.xp,
-        };
-
-        const { data, error } = await supabase
-          .from('achievements')
-          .insert(achievementData)
-          .select()
-          .single();
-
-        if (!error && data) {
-          set((state) => ({
-            achievements: [data, ...state.achievements],
-          }));
-          get().addXP(definition.xp);
-          return data;
-        }
-        return null;
+        const id = (crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2, 9);
+        const data = { id, achievement_id: definition.id, name: definition.name, description: definition.description, icon: definition.icon, xp_reward: definition.xp } as any;
+        set((state) => ({ achievements: [data, ...state.achievements] }));
+        get().addXP(definition.xp);
+        return data;
       },
 
       addXP: async (amount) => {
         const { gamificationStats } = get();
         if (!gamificationStats) return;
-
         const newXP = gamificationStats.total_xp + amount;
         const newLevel = Math.floor(newXP / 100) + 1;
-
-        const { error } = await supabase
-          .from('gamification_stats')
-          .update({
-            total_xp: newXP,
-            current_level: newLevel,
-            last_activity_date: new Date().toISOString().split('T')[0],
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', gamificationStats.id);
-
-        if (!error) {
-          set({
-            gamificationStats: {
-              ...gamificationStats,
-              total_xp: newXP,
-              current_level: newLevel,
-              last_activity_date: new Date().toISOString().split('T')[0],
-            },
-          });
-        }
+        set({ gamificationStats: { ...gamificationStats, total_xp: newXP, current_level: newLevel, last_activity_date: new Date().toISOString().split('T')[0] } });
       },
 
       recalculateTotals: () => {
