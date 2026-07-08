@@ -1,6 +1,6 @@
 [build]
   publish = "dist"
-  command = "npm run build"
+  command = "npm ci --include=dev && npm run build"
 
 [context.production]
   environment = { NODE_ENV = "production", NPM_FLAGS = "--include=dev", NODE_VERSION = "18" }
